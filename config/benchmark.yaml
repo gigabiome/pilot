@@ -1,0 +1,158 @@
+# =============================================================================
+# AMRBench pilot configuration
+# -----------------------------------------------------------------------------
+# Everything that defines "the benchmark" lives here, not in code. When the real
+# data arrives you should only need to change:
+#   1. data_root            -> point at the real data folder
+#   2. antibiotics          -> the real >=15 antibiotic panel
+#   3. breakpoints          -> the real EUCAST clinical breakpoint table
+#   4. mic_panel            -> the real tested concentration range
+# =============================================================================
+
+benchmark_name: AMRBench-pilot
+version: 0.1.0
+seed: 42
+
+data_root: data/mock        # <- swap to data/real when sequencing is done
+work_dir: work              # intermediate files (features, sketches)
+release_dir: release        # what would be published (public/) or kept (private/)
+submissions_dir: submissions
+results_dir: results
+
+species:
+  - Enterococcus faecium
+  - Staphylococcus aureus
+  - Klebsiella pneumoniae
+  - Acinetobacter baumannii
+  - Pseudomonas aeruginosa
+  - Enterobacter cloacae
+  - Escherichia coli
+
+antibiotics:
+  - ciprofloxacin
+  - meropenem
+  - gentamicin
+  - ceftazidime
+  - tetracycline
+  - trimethoprim
+
+# Tested broth-microdilution range, as log2(mg/L). -4..6 = 0.0625..64 mg/L.
+# Values outside it are censored in the lab report ("<=0.0625", ">64").
+mic_panel:
+  min_log2: -4
+  max_log2: 6
+
+# Clinical breakpoints in mg/L. Rule used: Resistant if MIC > breakpoint.
+# !! MOCK VALUES - NOT EUCAST !!  Replace with the EUCAST table (which is
+# species-specific and has an S<= and R> value; we use the R> value here).
+breakpoints:
+  default:
+    ciprofloxacin: 0.5
+    meropenem: 8
+    gentamicin: 2
+    ceftazidime: 4
+    tetracycline: 4
+    trimethoprim: 4
+  Staphylococcus aureus:
+    ciprofloxacin: 2
+  Pseudomonas aeruginosa:
+    ceftazidime: 8
+
+qc:
+  require_qc_pass: true     # isolates failing assembly QC are excluded
+
+splits:
+  test_fraction: 0.2        # held-out test partition (labels never released)
+  val_fraction: 0.1         # validation partition (for tuning + calibration)
+  # Genomic-similarity sketch (Mash-like) used to define clone clusters.
+  sketch_k: 21
+  sketch_bits: 20
+  # Isolates closer than this Jaccard distance (within a species) are grouped
+  # into the same clone cluster and can never be split across train/test.
+  clone_distance_threshold: 0.12
+  stratify_by: [species, collection_site]
+  # T6: species removed from training and used only for testing.
+  cross_species_holdout:
+    - Klebsiella pneumoniae     # shares plasmids with other species -> should transfer
+    - Enterococcus faecium      # has (mock) intrinsic resistance nobody else has -> should not
+
+# -----------------------------------------------------------------------------
+# Benchmark tasks. "kind" selects the scoring routine in amrbench/harness.py.
+# Targets are copied from Appendix Q9 so the leaderboard can show pass/fail.
+# -----------------------------------------------------------------------------
+tasks:
+  T1:
+    name: MIC prediction - S. aureus
+    kind: mic
+    species: [Staphylococcus aureus]
+    target: {essential_agreement: 0.85}
+  T2:
+    name: MIC prediction - A. baumannii
+    kind: mic
+    species: [Acinetobacter baumannii]
+    target: {essential_agreement: 0.88}
+  T3:
+    name: MIC prediction - P. aeruginosa
+    kind: mic
+    species: [Pseudomonas aeruginosa]
+    target: {essential_agreement: 0.75}
+  T4:
+    name: MIC prediction - Enterobacter, Enterococcus, E. coli, Klebsiella
+    kind: mic
+    species: [Enterobacter cloacae, Enterococcus faecium, Escherichia coli, Klebsiella pneumoniae]
+    per_species: true
+    target: {essential_agreement: 0.75}
+  T5:
+    name: Binary R/S classification at clinical breakpoint
+    kind: binary
+    target: {f1: 0.88, sensitivity: 0.90}
+  T6:
+    name: Cross-species generalisation
+    kind: cross_species
+    target: {ea_drop_pp_max: 15, ece_max: 0.10}
+  T7:
+    name: Feature attribution & uncertainty calibration
+    kind: attribution
+    top_k: 5
+    target: {topk_recall: 0.80, ece_max: 0.10}
+
+# -----------------------------------------------------------------------------
+# Baseline models (hyper-parameters kept small for the pilot)
+# -----------------------------------------------------------------------------
+models:
+  kmer:
+    k: 15
+    n_bits: 18              # k-mers hashed into 2^18 bins
+    min_prevalence: 0.02    # drop k-mers in <2% or >98% of training genomes
+    alphas: [1.0, 10.0, 100.0, 1000.0]
+  pangenome:
+    n_estimators: 300
+    min_samples_leaf: 2
+    max_features: 0.3
+    min_prevalence: 0.02
+  gnn:
+    hidden: 64
+    layers: 3
+    epochs: 150
+    lr: 0.003
+    batch_size: 32
+    patience: 25
+
+# -----------------------------------------------------------------------------
+# Mock data generator (ignored once data_root points at real data)
+# -----------------------------------------------------------------------------
+mock:
+  isolates_per_species: 80
+  n_lineages: 6
+  n_core_genes: 100
+  n_accessory_genes: 40
+  gene_length: 300
+  mic_noise_sd: 0.6         # lab reproducibility noise, in log2 dilutions
+  missing_rate: 0.04        # fraction of isolate x antibiotic tests missing
+  qc_fail_rate: 0.03
+  sites: [UCL, Royal Free]
+  # Illustrative intrinsic resistance (species-level, not gene-driven).
+  intrinsic:
+    Enterococcus faecium: [ceftazidime, trimethoprim]
+    Pseudomonas aeruginosa: [tetracycline, trimethoprim]
+    Acinetobacter baumannii: [trimethoprim]

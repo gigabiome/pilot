@@ -1,0 +1,2 @@
+[console_scripts]
+amrbench = amrbench.cli:main

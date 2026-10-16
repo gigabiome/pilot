@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.DS_Store
+# generated outputs - reproducible from config + code (`amrbench run-all`)
+data/mock/
+work/
+release/
+submissions/
+results/
